@@ -2395,6 +2395,9 @@ function renderDash(){
   let estNet=null;
   if(plData&&typeof plData.netProfit==='number'){estNet=plData.netProfit;}
   else if(sales){estNet=c.gross-dailyFC;}
+  // P&L breakdown values (only available when P&L is submitted)
+  const plCogs=plData?parseN(plData.cogsTotal||0):null;
+  const plTotalExp=(plData&&typeof plData.netProfit==='number')?(c.gross-parseN(plData.cogsTotal||0)-plData.netProfit):null;
 
   // Variance logic
   const varAmt=c.variance;
@@ -2446,9 +2449,12 @@ function renderDash(){
   const tAtv=tCust>0?c.netSales/tCust:null;
   const atvOk=atvTgt<=0||tAtv===null||tAtv>=atvTgt;
   const margin=c.gross>0&&estNet!==null?((estNet/c.gross)*100):null;
+  const netProfitLabel=plData&&typeof plData.netProfit==='number'?'Net Profit':'Est. Net Profit';
   h+=`<div class="sgrid">
     <div class="scard y"><div class="sl">Gross Sales</div><div class="sv">${mv('gross',fmtPHP(c.gross))}</div></div>
-    <div class="scard ${estNet!==null?(estNet>=0?'g':'r'):''}"><div class="sl">Est. Net Profit</div><div class="sv ${estNet!==null?(estNet>=0?'pos':'neg'):''}">${estNet!==null?mv('netProfit',fmtPHP(estNet)):'—'}</div></div>
+    <div class="scard ${estNet!==null?(estNet>=0?'g':'r'):''}"><div class="sl">${netProfitLabel}</div><div class="sv ${estNet!==null?(estNet>=0?'pos':'neg'):''}">${estNet!==null?mv('netProfit',fmtPHP(estNet)):'—'}</div></div>
+    <div class="scard"><div class="sl">Cost of Goods</div><div class="sv ${plCogs!==null&&plCogs>0?'neg':''}">${plCogs!==null?mv('cogs',fmtPHP(plCogs)):'—'}</div></div>
+    <div class="scard"><div class="sl">Total Expenses</div><div class="sv ${plTotalExp!==null&&plTotalExp>0?'neg':''}">${plTotalExp!==null?mv('expenses',fmtPHP(plTotalExp)):'—'}</div></div>
     <div class="scard ${sales&&varOver?(varAmt<0?'r':''):''}"><div class="sl">Cash Variance</div><div class="sv ${varAmt<0?'neg':varAmt>0?'pos':''}">${sales?mv('variance',fmtPHP(varAmt)):'—'}</div></div>
     <div class="scard"><div class="sl">Margin %</div><div class="sv">${margin!==null&&canSee('netProfit')&&canSee('gross')?margin.toFixed(1)+'%':'—'}</div></div>
     <div class="scard ${tAtv!==null?(atvOk?'g':'r'):''}"><div class="sl">Avg Transaction${atvTgt>0?' vs ₱'+atvTgt.toLocaleString():''}</div><div class="sv ${tAtv!==null?(atvOk?'pos':'neg'):''}">${tAtv!==null&&canSee('netSales')?fmtPHP(tAtv):'—'}</div></div>
