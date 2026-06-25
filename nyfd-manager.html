@@ -408,7 +408,7 @@ async function syncFromCloud(force){
     }
     const snap=await query.get();
     snap.forEach(doc=>{
-      if(doc.data()&&doc.data().v!==undefined)localStorage.setItem(doc.id,doc.data().v);
+      if(doc.data()&&doc.data().v!==undefined&&doc.id!==_SKEY)localStorage.setItem(doc.id,doc.data().v);
     });
     _lastSync=Date.now();
     return snap.size;
@@ -932,10 +932,7 @@ function enterApp(fbUser){
   syncFromCloud().then(function(n){
     if(n>0){
       showToast('☁️ Synced '+n+' record'+(n===1?'':'s')+' from cloud');
-      if(ST.tab==='dashboard')renderDash();
-      else if(ST.tab==='sales')renderSalesForm();
-      else if(ST.tab==='inventory')renderInventory();
-      else if(ST.tab==='revdash')renderRevenueDash();
+      try{goTab(ST.tab);}catch(e){}
     }
   }).catch(function(){});
 }
@@ -957,7 +954,7 @@ function enterApp(fbUser){
   try{syncFromCloud().then(function(n){
     if(n>0){
       showToast('☁️ Synced '+n+' record'+(n===1?'':'s')+' from cloud');
-      try{if(ST.tab==='dashboard')renderDash();else if(ST.tab==='sales')renderSalesForm();else if(ST.tab==='inventory')renderInventory();}catch(e){}
+      try{goTab(ST.tab);}catch(e){}
     }
   }).catch(function(){});}catch(e){}
 })();
@@ -1037,7 +1034,7 @@ function syncAndLogout(){
 function uploadAllLocalToCloud(){
   if(!ST.user||ST.user.role!=='owner'){showToast('Owner only');return;}
   if(!_AUTH||!_AUTH.currentUser){showToast('⚠️ Not signed in to cloud — cannot upload');return;}
-  var keys=Object.keys(localStorage).filter(function(k){return k.indexOf('nyfd_')===0;});
+  var keys=Object.keys(localStorage).filter(function(k){return k.indexOf('nyfd_')===0&&k!==_SKEY;});
   if(!keys.length){showToast('No local data to upload');return;}
   if(!confirm('Upload ALL '+keys.length+' data records on THIS device to the cloud?\n\nDo this on the device that has your most complete and recent data. It overwrites the cloud copy of any matching records.'))return;
   var st=document.getElementById('backfill-status');
