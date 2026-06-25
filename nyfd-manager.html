@@ -949,29 +949,22 @@ function enterApp(fbUser){
   if(!rec){_clearSession();return;}
   try{_showApp(rec);}catch(e){_clearSession();}
 })();
-// Firebase Auth verifies in background — confirms or revokes the cached session.
+// Firebase Auth verifies in background — confirms the cached session or handles explicit sign-out.
 _AUTH.onAuthStateChanged(function(fbUser){
   if(fbUser){
     try{enterApp(fbUser);}catch(e){console.error('enterApp error:',e);}
   } else {
-    if(_FIREBASE_AVAILABLE){
-      // Firebase is reachable and says not signed in — invalidate cache and sign out
-      _clearSession();
-      if(ST.user){forceLogout();}
-      else{
-        var ll=document.getElementById('login-loading'); if(ll)ll.style.display='none';
-        var lf=document.getElementById('login-form'); if(lf)lf.style.display='';
-        ST.user=null;
-        var ls=document.getElementById('login-screen'); if(ls)ls.style.display='flex';
-        var ap=document.getElementById('app'); if(ap)ap.style.display='none';
-      }
-    } else {
-      // Firebase offline — if we have a cached session keep it, otherwise show login form
-      if(!ST.user){
-        var ll2=document.getElementById('login-loading'); if(ll2)ll2.style.display='none';
-        var lf2=document.getElementById('login-form'); if(lf2)lf2.style.display='';
-      }
+    // Firebase has no active session. Two cases:
+    // 1. No cache either (fresh visit or after explicit logout) → show login form.
+    // 2. Cache exists (user refreshed page, Firebase failed to restore its IndexedDB) → stay in app.
+    //    localStorage is our source of truth; Firebase is used for cloud sync only.
+    if(!ST.user){
+      var ll=document.getElementById('login-loading'); if(ll)ll.style.display='none';
+      var lf=document.getElementById('login-form'); if(lf)lf.style.display='';
+      var ls=document.getElementById('login-screen'); if(ls)ls.style.display='flex';
+      var ap=document.getElementById('app'); if(ap)ap.style.display='none';
     }
+    // If ST.user is already set from the cache restore above, do nothing — keep the app open.
   }
 });
 document.getElementById('lp').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin()});
