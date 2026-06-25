@@ -271,10 +271,13 @@ header{background:linear-gradient(135deg,var(--red),#9B0020);color:#fff;padding:
       <h1>NEW YORK FRIES &amp; DIPS</h1>
       <p>Shop Management System</p>
     </div>
-    <div class="lerr" id="lerr">Incorrect username or password.</div>
-    <div class="fg"><label>Username</label><input type="text" id="lu" autocomplete="username" placeholder="Enter username"></div>
-    <div class="fg"><label>Password</label><input type="password" id="lp" autocomplete="current-password" placeholder="Enter password"></div>
-    <button class="btn-login" id="login-btn" onclick="doLogin()">SIGN IN</button>
+    <div id="login-loading" style="padding:.5rem 0 1.25rem;color:#9CA3AF;font-size:.88rem;text-align:center">Signing you in…</div>
+    <div id="login-form" style="display:none">
+      <div class="lerr" id="lerr">Incorrect username or password.</div>
+      <div class="fg"><label>Username</label><input type="text" id="lu" autocomplete="username" placeholder="Enter username"></div>
+      <div class="fg"><label>Password</label><input type="password" id="lp" autocomplete="current-password" placeholder="Enter password"></div>
+      <button class="btn-login" id="login-btn" onclick="doLogin()">SIGN IN</button>
+    </div>
   </div>
 </div>
 
@@ -353,11 +356,12 @@ try{
   firebase.initializeApp(_FB_CFG);
   _DB=firebase.firestore();
   _AUTH=firebase.auth();
+  _AUTH.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(){});
 }catch(_fbErr){
   console.warn('Firebase unavailable — running in local-only mode:',_fbErr.message);
   const _noop=()=>Promise.resolve();
   _DB={collection:()=>({doc:()=>({set:_noop,get:()=>Promise.resolve({exists:false,data:()=>null})}),get:()=>Promise.resolve({docs:[],forEach:()=>{}})})};
-  _AUTH={currentUser:null,onAuthStateChanged:function(){},signInWithEmailAndPassword:function(){return Promise.reject({code:'auth/network-request-failed'});},signOut:function(){return Promise.resolve();}};
+  _AUTH={currentUser:null,onAuthStateChanged:function(cb){cb(null);},signInWithEmailAndPassword:function(){return Promise.reject({code:'auth/network-request-failed'});},signOut:function(){return Promise.resolve();}};
 }
 const _COL='nyfd_data';
 let _lastSync=0;
@@ -930,6 +934,8 @@ _AUTH.onAuthStateChanged(function(fbUser){
   if(fbUser){ try{enterApp(fbUser);}catch(e){console.error('enterApp error:',e);} }
   else {
     ST.user=null;
+    var ll=document.getElementById('login-loading'); if(ll)ll.style.display='none';
+    var lf=document.getElementById('login-form'); if(lf)lf.style.display='';
     var ls=document.getElementById('login-screen'); if(ls)ls.style.display='flex';
     var ap=document.getElementById('app'); if(ap)ap.style.display='none';
   }
@@ -967,6 +973,8 @@ function forceLogout(){
   _pendingWrites=0;
   ST.user=null;
   try{_AUTH.signOut();}catch(e){}
+  var ll=document.getElementById('login-loading'); if(ll)ll.style.display='none';
+  var lf=document.getElementById('login-form'); if(lf)lf.style.display='';
   document.getElementById('login-screen').style.display='flex';
   document.getElementById('app').style.display='none';
   document.getElementById('lu').value='';
