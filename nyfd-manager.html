@@ -953,6 +953,13 @@ function enterApp(fbUser){
   try{populateBranchSelects();}catch(e){}
   try{applyPerms();}catch(e){}
   try{var p=rec.perms||{};var ft=rec.role==='owner'?'dashboard':p.sales!==false?'sales':p.inventory!==false?'inventory':'history';goTab(ft);}catch(e){}
+  // Pull latest data from cloud so this device sees changes made on other devices
+  try{syncFromCloud().then(function(n){
+    if(n>0){
+      showToast('☁️ Synced '+n+' record'+(n===1?'':'s')+' from cloud');
+      try{if(ST.tab==='dashboard')renderDash();else if(ST.tab==='sales')renderSalesForm();else if(ST.tab==='inventory')renderInventory();}catch(e){}
+    }
+  }).catch(function(){});}catch(e){}
 })();
 // Firebase Auth verifies in background — confirms the cached session or handles explicit sign-out.
 _AUTH.onAuthStateChanged(function(fbUser){
