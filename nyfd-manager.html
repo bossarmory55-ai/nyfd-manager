@@ -349,7 +349,7 @@ const _FB_CFG={
 };
 // Graceful fallback: if Firebase CDN failed to load (offline / blocked),
 // use a no-op stub so the rest of the app runs entirely from localStorage.
-let _DB, _AUTH;
+let _DB, _AUTH, _FIREBASE_AVAILABLE=false;
 const AUTH_EMAIL_DOMAIN='@nyfd.app'; // app username "owner" → Firebase account "owner@nyfd.app"
 try{
   if(typeof firebase==='undefined')throw new Error('Firebase SDK not loaded');
@@ -357,12 +357,18 @@ try{
   _DB=firebase.firestore();
   _AUTH=firebase.auth();
   _AUTH.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(){});
+  _FIREBASE_AVAILABLE=true;
 }catch(_fbErr){
   console.warn('Firebase unavailable — running in local-only mode:',_fbErr.message);
   const _noop=()=>Promise.resolve();
   _DB={collection:()=>({doc:()=>({set:_noop,get:()=>Promise.resolve({exists:false,data:()=>null})}),get:()=>Promise.resolve({docs:[],forEach:()=>{}})})};
-  _AUTH={currentUser:null,onAuthStateChanged:function(cb){cb(null);},signInWithEmailAndPassword:function(){return Promise.reject({code:'auth/network-request-failed'});},signOut:function(){return Promise.resolve();}};
+  _AUTH={currentUser:null,onAuthStateChanged:function(){},signInWithEmailAndPassword:function(){return Promise.reject({code:'auth/network-request-failed'});},signOut:function(){return Promise.resolve();}};
 }
+// Session cache key — stores username so page refresh doesn't require re-login
+const _SKEY='nyfd_session_v2';
+function _saveSession(u){try{localStorage.setItem(_SKEY,u);}catch(e){}}
+function _clearSession(){try{localStorage.removeItem(_SKEY);}catch(e){}}
+function _getSavedSession(){try{return localStorage.getItem(_SKEY)||'';}catch(e){return '';}}
 const _COL='nyfd_data';
 let _lastSync=0;
 let _pendingWrites=0;
@@ -902,15 +908,10 @@ function doLogin(){
     console.warn('Login failed:',e&&e.code);
   });
 }
-// Build the in-app session for an authenticated Firebase user (role/permissions come from the local user record).
-function enterApp(fbUser){
-  const uname=(fbUser.email||'').split('@')[0];
-  const users=loadUsers();
-  let rec=users.find(function(x){return (x.username||'').toLowerCase()===uname.toLowerCase();});
-  if(!rec)rec={username:uname,name:uname.charAt(0).toUpperCase()+uname.slice(1),role:'staff',perms:{sales:true,inventory:true}};
+// Show app UI for a given user record (called from cache restore and enterApp).
+function _showApp(rec){
   ST.user=rec;
   document.getElementById('ulbl').textContent=rec.name+' ('+rec.role+')';
-  document.getElementById('lerr').style.display='none';
   document.getElementById('login-screen').style.display='none';
   document.getElementById('app').style.display='block';
   populateBranchSelects();
@@ -918,6 +919,17 @@ function enterApp(fbUser){
   const perms=rec.perms||{};
   const firstTab=rec.role==='owner'?'dashboard':perms.sales!==false?'sales':perms.inventory!==false?'inventory':'history';
   try{goTab(firstTab);}catch(tabErr){console.error('Tab render error:',tabErr);}
+}
+// Build the in-app session for an authenticated Firebase user.
+function enterApp(fbUser){
+  const uname=(fbUser.email||'').split('@')[0];
+  _saveSession(uname);
+  const users=loadUsers();
+  let rec=users.find(function(x){return (x.username||'').toLowerCase()===uname.toLowerCase();});
+  if(!rec)rec={username:uname,name:uname.charAt(0).toUpperCase()+uname.slice(1),role:'staff',perms:{sales:true,inventory:true}};
+  document.getElementById('lerr').style.display='none';
+  if(!ST.user) _showApp(rec); // only show if not already restored from cache
+  else ST.user=rec; // update user record in case perms changed
   syncFromCloud().then(function(n){
     if(n>0){
       showToast('☁️ Synced '+n+' record'+(n===1?'':'s')+' from cloud');
@@ -928,16 +940,38 @@ function enterApp(fbUser){
     }
   }).catch(function(){});
 }
-// Restore an existing session on load, and react to login/logout. Firebase keeps the
-// session on this device (so reopening works even offline once you've logged in once).
+// On page load: immediately restore session from localStorage so refresh never shows login screen.
+(function(){
+  var saved=_getSavedSession();
+  if(!saved)return;
+  var users=loadUsers();
+  var rec=users.find(function(x){return (x.username||'').toLowerCase()===saved.toLowerCase();});
+  if(!rec){_clearSession();return;}
+  try{_showApp(rec);}catch(e){_clearSession();}
+})();
+// Firebase Auth verifies in background — confirms or revokes the cached session.
 _AUTH.onAuthStateChanged(function(fbUser){
-  if(fbUser){ try{enterApp(fbUser);}catch(e){console.error('enterApp error:',e);} }
-  else {
-    ST.user=null;
-    var ll=document.getElementById('login-loading'); if(ll)ll.style.display='none';
-    var lf=document.getElementById('login-form'); if(lf)lf.style.display='';
-    var ls=document.getElementById('login-screen'); if(ls)ls.style.display='flex';
-    var ap=document.getElementById('app'); if(ap)ap.style.display='none';
+  if(fbUser){
+    try{enterApp(fbUser);}catch(e){console.error('enterApp error:',e);}
+  } else {
+    if(_FIREBASE_AVAILABLE){
+      // Firebase is reachable and says not signed in — invalidate cache and sign out
+      _clearSession();
+      if(ST.user){forceLogout();}
+      else{
+        var ll=document.getElementById('login-loading'); if(ll)ll.style.display='none';
+        var lf=document.getElementById('login-form'); if(lf)lf.style.display='';
+        ST.user=null;
+        var ls=document.getElementById('login-screen'); if(ls)ls.style.display='flex';
+        var ap=document.getElementById('app'); if(ap)ap.style.display='none';
+      }
+    } else {
+      // Firebase offline — if we have a cached session keep it, otherwise show login form
+      if(!ST.user){
+        var ll2=document.getElementById('login-loading'); if(ll2)ll2.style.display='none';
+        var lf2=document.getElementById('login-form'); if(lf2)lf2.style.display='';
+      }
+    }
   }
 });
 document.getElementById('lp').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin()});
@@ -972,6 +1006,7 @@ function forceLogout(){
   stopLiveSync();
   _pendingWrites=0;
   ST.user=null;
+  _clearSession();
   try{_AUTH.signOut();}catch(e){}
   var ll=document.getElementById('login-loading'); if(ll)ll.style.display='none';
   var lf=document.getElementById('login-form'); if(lf)lf.style.display='';
