@@ -873,7 +873,7 @@ function rejectRestockB(branch,date,id){
 }
 
 // ── STATE ──────────────────────────────────────────────────────
-let ST={user:null,branch:'Branch 1',tab:'dashboard',storWeek:null,schedMonth:null,warehouse:null,historyMonth:null,revBranch:null,payrollPeriod:'full',poFilter:'open',histFilter:'all'};
+let ST={user:null,branch:'Branch 1',tab:'dashboard',storWeek:null,schedMonth:null,warehouse:null,historyMonth:null,revBranch:null,payrollPeriod:'full',poFilter:'open',histFilter:'all',dashDate:null,dashMode:'single',dashFrom:null,dashTo:null,revDate:null,revMode:'single',revFrom:null,revTo:null,stockDate:null};
 function switchRevBranch(b){ST.revBranch=b||null;renderRevenueDash();}
 
 // ── HELPERS ───────────────────────────────────────────────────
@@ -2367,10 +2367,45 @@ function shareViaEmail(){
   window.open('mailto:'+(s.email||'')+('?subject='+encodeURIComponent('[NYFD] Daily Report — '+branch+' — '+t)+'&body='+encodeURIComponent(body)));
 }
 
+// ── DATE PICKER HELPERS ───────────────────────────────────────
+function dashSetMode(m){ST.dashMode=m;if(m==='single'&&!ST.dashDate)ST.dashDate=today();if(m==='range'){if(!ST.dashFrom)ST.dashFrom=today();if(!ST.dashTo)ST.dashTo=today();}renderDash();}
+function dashGoDate(d){ST.dashDate=d;ST.dashMode='single';renderDash();}
+function dashGoRange(){var f=document.getElementById('dash-from'),t2=document.getElementById('dash-to');if(f&&t2){ST.dashFrom=f.value;ST.dashTo=t2.value;ST.dashMode='range';renderDash();}}
+function revSetMode(m){ST.revMode=m;if(m==='single'&&!ST.revDate)ST.revDate=today();if(m==='range'){if(!ST.revFrom)ST.revFrom=today();if(!ST.revTo)ST.revTo=today();}renderRevenueDash();}
+function revGoDate(d){ST.revDate=d;ST.revMode='single';renderRevenueDash();}
+function revGoRange(){var f=document.getElementById('rev-from'),t2=document.getElementById('rev-to');if(f&&t2){ST.revFrom=f.value;ST.revTo=t2.value;ST.revMode='range';renderRevenueDash();}}
+function stockGoDate(d){ST.stockDate=d;renderStockDash();}
+function _buildDatePicker(mode,singleDate,fromDate,toDate,setModeFn,goRangeFn,singleId,fromId,toId){
+  var btnS='<button onclick="'+setModeFn+'(\'single\')" style="padding:.25rem .7rem;font-size:.78rem;font-weight:700;border-radius:20px 0 0 20px;border:1.5px solid var(--bdr);background:'+(mode==='single'?'var(--red)':'#fff')+';color:'+(mode==='single'?'#fff':'#374151')+';cursor:pointer">Single Day</button>';
+  var btnR='<button onclick="'+setModeFn+'(\'range\')" style="padding:.25rem .7rem;font-size:.78rem;font-weight:700;border-radius:0 20px 20px 0;border:1.5px solid var(--bdr);border-left:none;background:'+(mode==='range'?'var(--red)':'#fff')+';color:'+(mode==='range'?'#fff':'#374151')+';cursor:pointer">Date Range</button>';
+  var picker='';
+  if(mode==='single'){
+    picker='<input type="date" id="'+singleId+'" value="'+(singleDate||today())+'" onchange="'+setModeFn.replace('SetMode','GoDate')+'(this.value)" style="border:1.5px solid var(--bdr);border-radius:8px;padding:.25rem .5rem;font-size:.82rem;background:#fff;color:#1F2937">';
+  } else {
+    picker='<input type="date" id="'+fromId+'" value="'+(fromDate||today())+'" style="border:1.5px solid var(--bdr);border-radius:8px;padding:.25rem .4rem;font-size:.82rem;background:#fff;color:#1F2937">'
+      +' <span style="font-size:.8rem;color:var(--grey);font-weight:700">to</span> '
+      +'<input type="date" id="'+toId+'" value="'+(toDate||today())+'" style="border:1.5px solid var(--bdr);border-radius:8px;padding:.25rem .4rem;font-size:.82rem;background:#fff;color:#1F2937">'
+      +' <button onclick="'+goRangeFn+'()" style="padding:.25rem .65rem;font-size:.78rem;font-weight:700;border-radius:8px;border:1.5px solid var(--red);background:var(--red);color:#fff;cursor:pointer">View</button>';
+  }
+  return '<div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">'+btnS+btnR+'<span style="width:6px"></span>'+picker+'</div>';
+}
+function _rangeLabel(from,to){
+  if(!from||!to)return '';
+  if(from===to)return fmtDate(from);
+  return fmtDate(from)+' → '+fmtDate(to);
+}
+// Get all dates between two ISO dates inclusive
+function _dateBetween(from,to){
+  var arr=[],cur=new Date(from+'T00:00:00');
+  var end=new Date(to+'T00:00:00');
+  while(cur<=end){arr.push(cur.toISOString().split('T')[0]);cur.setDate(cur.getDate()+1);}
+  return arr;
+}
+
 // ── DASHBOARD ─────────────────────────────────────────────────
 function renderDash(){
   const panel=document.getElementById('tp-dashboard');
-  const t=today();
+  const t=ST.dashDate||today();
   const sales=loadSales(t);
   const invData=loadInv(t);
   const plData=loadPL(t);
@@ -2414,7 +2449,69 @@ function renderDash(){
   const last7vals=last7dates.map(d=>{const rep=loadSales(d);return rep?computeSales(rep).gross:0;});
   const trendMax=Math.max(...last7vals,1);
 
-  let h=`<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem;flex-wrap:wrap;gap:.5rem">
+  // ── Range mode: aggregate and render, then return ─────────────
+  if(ST.dashMode==='range'){
+    const rf=ST.dashFrom||today(),rt=ST.dashTo||today();
+    const rdates=_dateBetween(rf,rt).filter(d=>loadSales(d));
+    let rGross=0,rNet=0,rVar=0,rCust=0,rCogs=0,rExp=0,rNetProfit=0,rNetProfitDays=0;
+    const rPlatT={};PLATFORMS.forEach(p=>{rPlatT[p]={qty:0,amt:0};});
+    const rItemT={};ORDER_ITEMS.forEach(it=>{rItemT[it]={qty:0,amt:0};});
+    rdates.forEach(d=>{
+      const rs=loadSales(d),rp=loadPL(d);
+      if(!rs)return;
+      const rc=computeSales(rs);
+      rGross+=rc.gross;rNet+=rc.netSales;rVar+=rc.variance;rCust+=parseN(rs.custCount);
+      PLATFORMS.forEach(pl=>{rPlatT[pl].qty+=parseN(rs.online&&rs.online[pl]?rs.online[pl].qty:'');rPlatT[pl].amt+=parseN(rs.online&&rs.online[pl]?rs.online[pl].amt:'');});
+      ORDER_ITEMS.forEach(it=>{rItemT[it].qty+=parseN(rs.orders&&rs.orders[it]?rs.orders[it].qty:'');rItemT[it].amt+=parseN(rs.orders&&rs.orders[it]?rs.orders[it].amt:'');});
+      if(rp){rCogs+=parseN(rp.cogsTotal||0);if(typeof rp.netProfit==='number'){rNetProfit+=rp.netProfit;rNetProfitDays++;if(typeof rp.netProfit==='number')rExp+=(rc.gross-parseN(rp.cogsTotal||0)-rp.netProfit);}}
+    });
+    const rAtv=rCust>0?rNet/rCust:null;
+    const rDays=rdates.length;
+    const rMargin=rGross>0&&rNetProfitDays>0?(rNetProfit/rGross*100):null;
+    let rh=`<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.6rem;flex-wrap:wrap;gap:.5rem">
+      <div style="font-weight:800;font-size:1rem">📊 CEO Overview</div>
+      <div style="display:flex;gap:.5rem;align-items:center">
+        <span id="live-ind" style="display:none;width:9px;height:9px;border-radius:50%;background:rgba(34,197,94,.5);border:2px solid #22c55e"></span>
+        <button class="btn btn-grey btn-sm" onclick="syncAndRefresh()" style="font-size:.78rem">🔄 Sync</button>
+        <select class="branch-sel" id="dash-branch-sel" style="background:var(--grey2);color:#374151;border:1.5px solid var(--bdr)" onchange="changeBranch(this.value)"></select>
+      </div></div>`;
+    rh+=_buildDatePicker('range',ST.dashDate,ST.dashFrom,ST.dashTo,'dashSetMode','dashGoRange','dash-date','dash-from','dash-to');
+    rh+=`<div style="font-size:.78rem;color:var(--grey);margin:.4rem 0 .7rem;font-weight:700">📅 ${_rangeLabel(rf,rt)} &nbsp;·&nbsp; ${rDays} day${rDays!==1?'s':''} with sales data</div>`;
+    rh+=`<div class="sgrid">
+      <div class="scard y"><div class="sl">Gross Sales</div><div class="sv">${mv('gross',fmtPHP(rGross))}</div></div>
+      <div class="scard"><div class="sl">Net Sales</div><div class="sv">${mv('netSales',fmtPHP(rNet))}</div></div>
+      <div class="scard ${rNetProfitDays>0?(rNetProfit>=0?'g':'r'):''}"><div class="sl">Net Profit${rNetProfitDays<rDays?' ('+rNetProfitDays+' days)':''}</div><div class="sv ${rNetProfitDays>0?(rNetProfit>=0?'pos':'neg'):''}">${rNetProfitDays>0?mv('netProfit',fmtPHP(rNetProfit)):'—'}</div></div>
+      <div class="scard"><div class="sl">Cost of Goods</div><div class="sv ${rCogs>0?'neg':''}">${rCogs>0?mv('cogs',fmtPHP(rCogs)):'—'}</div></div>
+      <div class="scard"><div class="sl">Total Expenses</div><div class="sv ${rExp>0?'neg':''}">${rExp>0?mv('expenses',fmtPHP(rExp)):'—'}</div></div>
+      <div class="scard ${rVar<0?'r':''}"><div class="sl">Cash Variance</div><div class="sv ${rVar<0?'neg':rVar>0?'pos':''}">${fmtPHP(rVar)}</div></div>
+      <div class="scard"><div class="sl">Margin %</div><div class="sv">${rMargin!==null?rMargin.toFixed(1)+'%':'—'}</div></div>
+      <div class="scard"><div class="sl">Avg Transaction</div><div class="sv">${rAtv?fmtPHP(rAtv):'—'}</div></div>
+      <div class="scard"><div class="sl">Customers</div><div class="sv">${rCust>0?rCust.toLocaleString():'—'}</div></div>
+    </div>`;
+    // Platform breakdown
+    const rPlatRows=PLATFORMS.filter(p=>rPlatT[p].amt>0);
+    if(rPlatRows.length){
+      rh+=`<div class="card" style="padding:.75rem .85rem"><div class="ctitle">📲 Sales by Platform — Range Total</div><div style="overflow-x:auto"><table class="ft"><thead><tr><th>Platform</th><th class="r">Qty</th><th class="r">Amount</th><th class="r">% of Gross</th></tr></thead><tbody>`;
+      rPlatRows.forEach(p=>{const pct=rGross>0?(rPlatT[p].amt/rGross*100).toFixed(1):0;rh+=`<tr><td>${esc(p)}</td><td class="r">${rPlatT[p].qty}</td><td class="r">${fmtPHP(rPlatT[p].amt)}</td><td class="r">${pct}%</td></tr>`;});
+      const rWalkAmt=rGross-PLATFORMS.reduce((s,p)=>s+rPlatT[p].amt,0);
+      if(rWalkAmt>0){const pct=(rWalkAmt/rGross*100).toFixed(1);rh+=`<tr><td>Walk-in / Cash</td><td class="r">—</td><td class="r">${fmtPHP(rWalkAmt)}</td><td class="r">${pct}%</td></tr>`;}
+      rh+=`</tbody></table></div></div>`;
+    }
+    // Top items
+    const rTopItems=ORDER_ITEMS.map(it=>({name:it,qty:rItemT[it].qty,amt:rItemT[it].amt})).filter(x=>x.qty>0).sort((a,b)=>b.qty-a.qty);
+    if(rTopItems.length){
+      rh+=`<div class="card" style="padding:.75rem .85rem"><div class="ctitle">🧾 Items Sold — Range Total</div><div style="overflow-x:auto"><table class="ft"><thead><tr><th>Item</th><th class="r">QTY</th><th class="r">Amount</th></tr></thead><tbody>`;
+      rTopItems.forEach(x=>{rh+=`<tr><td>${esc(x.name)}</td><td class="r">${x.qty}</td><td class="r">${fmtPHP(x.amt)}</td></tr>`;});
+      rh+=`</tbody></table></div></div>`;
+    }
+    panel.innerHTML=rh;
+    const bsel=document.getElementById('dash-branch-sel');
+    if(bsel){loadBranches().forEach(b=>{const o=document.createElement('option');o.value=b;o.textContent=b;if(b===ST.branch)o.selected=true;bsel.appendChild(o);});}
+    return;
+  }
+
+  const _dpHtml=_buildDatePicker('single',t,ST.dashFrom,ST.dashTo,'dashSetMode','dashGoRange','dash-date','dash-from','dash-to');
+  let h=`<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.6rem;flex-wrap:wrap;gap:.5rem">
     <div style="font-weight:800;font-size:1rem">📊 CEO Overview — ${fmtDate(t)}</div>
     <div style="display:flex;gap:.5rem;align-items:center">
     <span id="live-ind" title="Live sync active" style="display:none;width:9px;height:9px;border-radius:50%;background:rgba(34,197,94,.5);border:2px solid #22c55e;transition:background .4s;vertical-align:middle"></span>
@@ -2425,7 +2522,8 @@ function renderDash(){
     <button class="btn btn-grey btn-sm" onclick="shareViaEmail()" style="font-size:.78rem">📧 Share</button>
     <select class="branch-sel" id="dash-branch-sel" style="background:var(--grey2);color:#374151;border:1.5px solid var(--bdr)" onchange="changeBranch(this.value)"></select>
     </div>
-  </div>`;
+  </div>
+  ${_dpHtml}`;
 
   // ── 1. Report Submissions ─────────────────────────────────────
   const chk=(icon,lbl,done)=>{
@@ -2459,6 +2557,93 @@ function renderDash(){
     <div class="scard"><div class="sl">Margin %</div><div class="sv">${margin!==null&&canSee('netProfit')&&canSee('gross')?margin.toFixed(1)+'%':'—'}</div></div>
     <div class="scard ${tAtv!==null?(atvOk?'g':'r'):''}"><div class="sl">Avg Transaction${atvTgt>0?' vs ₱'+atvTgt.toLocaleString():''}</div><div class="sv ${tAtv!==null?(atvOk?'pos':'neg'):''}">${tAtv!==null&&canSee('netSales')?fmtPHP(tAtv):'—'}</div></div>
   </div>`;
+
+  // ── 2b. Daily Sales Detail ────────────────────────────────────
+  if(sales){
+    // Platform breakdown
+    const platRows=PLATFORMS.filter(p=>parseN(sales.online&&sales.online[p]?sales.online[p].amt:'')||parseN(sales.online&&sales.online[p]?sales.online[p].qty:''));
+    const onlineTotal=PLATFORMS.reduce((s,p)=>s+parseN(sales.online&&sales.online[p]?sales.online[p].amt:''),0);
+    const walkInAmt=c.gross-onlineTotal;
+    h+=`<div class="card" style="padding:.75rem .85rem">
+      <div class="ctitle">📲 Sales by Platform</div>
+      <div style="overflow-x:auto"><table class="ft"><thead><tr><th>Platform / Channel</th><th class="r">QTY</th><th class="r">Amount</th><th class="r">% of Gross</th></tr></thead><tbody>`;
+    platRows.forEach(p=>{
+      const qty=parseN(sales.online[p].qty),amt=parseN(sales.online[p].amt);
+      const pct=c.gross>0?(amt/c.gross*100).toFixed(1):'0.0';
+      h+=`<tr><td>${esc(p)}</td><td class="r">${qty||'—'}</td><td class="r">${fmtPHP(amt)}</td><td class="r">${pct}%</td></tr>`;
+    });
+    if(walkInAmt>0){const pct=c.gross>0?(walkInAmt/c.gross*100).toFixed(1):'0.0';h+=`<tr><td style="font-weight:700">Walk-in / Cash</td><td class="r">—</td><td class="r"><strong>${fmtPHP(walkInAmt)}</strong></td><td class="r">${pct}%</td></tr>`;}
+    h+=`<tr style="background:#F8F9FA"><td colspan="2" style="font-weight:900">TOTAL GROSS</td><td class="r" style="font-weight:900">${fmtPHP(c.gross)}</td><td class="r">100%</td></tr>`;
+    if(sales.disc){const scA=parseN(sales.disc.SC?.amt),pwdA=parseN(sales.disc.PWD?.amt);if(scA||pwdA){h+=`<tr><td colspan="2" style="color:#D97706">SC Discount</td><td class="r" style="color:#D97706">-${fmtPHP(scA)}</td><td></td></tr>`;if(pwdA)h+=`<tr><td colspan="2" style="color:#D97706">PWD Discount</td><td class="r" style="color:#D97706">-${fmtPHP(pwdA)}</td><td></td></tr>`;h+=`<tr><td colspan="2" style="font-weight:800">Net Sales</td><td class="r" style="font-weight:800">${fmtPHP(c.netSales)}</td><td></td></tr>`;}}
+    h+=`</tbody></table></div></div>`;
+
+    // Order items detail
+    const ordRows=ORDER_ITEMS.map(it=>({name:it,qty:parseN(sales.orders&&sales.orders[it]?sales.orders[it].qty:''),amt:parseN(sales.orders&&sales.orders[it]?sales.orders[it].amt:'')})).filter(x=>x.qty||x.amt);
+    if(ordRows.length){
+      h+=`<div class="card" style="padding:.75rem .85rem"><div class="ctitle">🧾 Items Sold</div><div style="overflow-x:auto"><table class="ft"><thead><tr><th>Item</th><th class="r">QTY</th><th class="r">Amount</th><th class="r">% of Gross</th></tr></thead><tbody>`;
+      let totQ=0,totA=0;
+      ordRows.forEach(x=>{const pct=c.gross>0?(x.amt/c.gross*100).toFixed(1):'0.0';h+=`<tr><td>${esc(x.name)}</td><td class="r">${x.qty||'—'}</td><td class="r">${fmtPHP(x.amt)}</td><td class="r">${pct}%</td></tr>`;totQ+=x.qty;totA+=x.amt;});
+      h+=`<tr style="background:#F8F9FA"><td style="font-weight:900">TOTAL</td><td class="r" style="font-weight:900">${totQ}</td><td class="r" style="font-weight:900">${fmtPHP(totA)}</td><td class="r">100%</td></tr>`;
+      h+=`</tbody></table></div></div>`;
+    }
+
+    // Cash denomination breakdown
+    const hasCash=DENOMS.some(dn=>parseN(sales.cash&&sales.cash[dn]));
+    if(hasCash){
+      h+=`<div class="card" style="padding:.75rem .85rem"><div class="ctitle">💵 Cash Denomination Count</div><div style="overflow-x:auto"><table class="ft"><thead><tr><th>Denomination</th><th class="r">Count</th><th class="r">Subtotal</th></tr></thead><tbody>`;
+      let cashTot=0;
+      DENOMS.forEach(dn=>{
+        const cnt=parseN(sales.cash&&sales.cash[dn]?sales.cash[dn]:0);
+        if(!cnt)return;
+        const sub=cnt*dn;cashTot+=sub;
+        h+=`<tr><td>₱${dn%1===0?dn.toLocaleString():dn.toFixed(2)}</td><td class="r">×${cnt}</td><td class="r">${fmtPHP(sub)}</td></tr>`;
+      });
+      h+=`<tr style="background:#F8F9FA"><td colspan="2" style="font-weight:900">Total Cash</td><td class="r" style="font-weight:900">${fmtPHP(cashTot)}</td></tr>`;
+      if(parseN(sales.openingFloat)){h+=`<tr><td colspan="2" style="color:var(--grey)">− Opening Float</td><td class="r" style="color:var(--grey)">-${fmtPHP(parseN(sales.openingFloat))}</td></tr><tr><td colspan="2" style="font-weight:800">Actual Cash Collected</td><td class="r" style="font-weight:800">${fmtPHP(c.actualCash)}</td></tr>`;}
+      h+=`</tbody></table></div></div>`;
+    }
+  }
+
+  // ── 2c. P&L Detail ───────────────────────────────────────────
+  if(plData){
+    h+=`<div class="card" style="padding:.75rem .85rem"><div class="ctitle">💰 P&amp;L Detail — ${fmtDate(t)}</div>`;
+    const _fc=loadFC();
+    const _fcOverrides=plData.fixedOverrides||{};
+    h+=`<div style="overflow-x:auto"><table class="ft"><tbody>`;
+    // Gross
+    h+=`<tr style="background:#FFFBEB"><td style="font-weight:800">Gross Sales</td><td class="r" style="font-weight:900">${fmtPHP(sales?c.gross:parseN(plData.gross||0))}</td></tr>`;
+    // COGS
+    const _cogsTot=parseN(plData.cogsTotal||0);
+    if(_cogsTot>0)h+=`<tr><td style="color:#B45309">Cost of Goods (COGS)</td><td class="r" style="color:#B45309;font-weight:800">-${fmtPHP(_cogsTot)}</td></tr>`;
+    // Fixed costs
+    if(Object.keys(_fc).length){
+      h+=`<tr style="background:#F9FAFB"><td colspan="2" style="font-size:.72rem;font-weight:800;color:var(--grey);text-transform:uppercase;letter-spacing:.3px">Fixed Costs</td></tr>`;
+      Object.entries(_fc).forEach(([k,v])=>{const ov=parseN(_fcOverrides[k]||v);if(ov)h+=`<tr><td style="padding-left:1rem;color:#374151">• ${esc(k)}</td><td class="r">-${fmtPHP(ov)}</td></tr>`;});
+    }
+    // Labor
+    const _labor=parseN(plData.laborOverride||0);
+    if(_labor>0)h+=`<tr><td style="color:#374151">Labor Cost</td><td class="r">-${fmtPHP(_labor)}</td></tr>`;
+    const _ot=parseN(plData.otOverride||0);
+    if(_ot>0)h+=`<tr><td style="color:#374151">Overtime Pay</td><td class="r">-${fmtPHP(_ot)}</td></tr>`;
+    // Expense log
+    const _expLog=loadExp(t);
+    const _apprS=loadApprovalSettings();
+    const _expAppr=_expLog.filter(e=>!_apprS.requireExpenseApproval||e.status==='approved');
+    if(_expAppr.length){
+      h+=`<tr style="background:#F9FAFB"><td colspan="2" style="font-size:.72rem;font-weight:800;color:var(--grey);text-transform:uppercase;letter-spacing:.3px">Expenses</td></tr>`;
+      _expAppr.forEach(e=>{h+=`<tr><td style="padding-left:1rem;color:#374151">• ${esc(e.desc||e.cat)} <span style="font-size:.7rem;color:var(--grey)">[${esc(e.cat)}]</span></td><td class="r">-${fmtPHP(parseN(e.amt))}</td></tr>`;});
+    }
+    // Restocks logged as COGS
+    const _rk=loadRestocks(t).filter(r=>!_apprS.requireRestockApproval||r.status==='approved');
+    if(_rk.length&&_cogsTot===0){
+      h+=`<tr style="background:#F9FAFB"><td colspan="2" style="font-size:.72rem;font-weight:800;color:var(--grey);text-transform:uppercase;letter-spacing:.3px">Restocks (as COGS)</td></tr>`;
+      _rk.forEach(r=>{h+=`<tr><td style="padding-left:1rem;color:#374151">• ${esc(r.item)}</td><td class="r">-${fmtPHP(parseN(r.totalCost))}</td></tr>`;});
+    }
+    // Net profit
+    const _netP=typeof plData.netProfit==='number'?plData.netProfit:null;
+    h+=`<tr style="background:${_netP===null?'#F9FAFB':_netP>=0?'#D1FAE5':'#FEE2E2'}"><td style="font-weight:900">Net Profit</td><td class="r" style="font-weight:900;color:${_netP===null?'var(--grey)':_netP>=0?'#065F46':'#991B1B'}">${_netP!==null?fmtPHP(_netP):'—'}</td></tr>`;
+    h+=`</tbody></table></div></div>`;
+  }
 
   // ── 3. 7-Day Sparkline ───────────────────────────────────────
   if(last7dates.length>=2){
@@ -5083,7 +5268,7 @@ function importBackup(input){
 // ── REVENUE DASHBOARD ─────────────────────────────────────────────
 function renderRevenueDash(){
   const panel=document.getElementById('tp-revdash');
-  const t=today();
+  const t=ST.revDate||today();
   const ym=t.slice(0,7);
 
   // ── Branch selector bar ──────────────────────────────────────
@@ -5194,11 +5379,57 @@ function renderRevenueDash(){
     return '<td class="r" style="font-weight:800;color:'+color+'">'+arrow+valStr+pctStr+'</td>';
   }
 
-  var h=_selH+'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem;flex-wrap:wrap;gap:.5rem">'
+  var h=_selH+'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.6rem;flex-wrap:wrap;gap:.5rem">'
     +'<div style="font-weight:800;font-size:1.05rem">📈 Revenue Dashboard'+(ST.branch!==_prevRevBr?' — '+esc(ST.branch):'')+'</div>'
     +'<div style="font-size:.78rem;color:var(--grey)">'+fmtDate(t)+'</div></div>';
+  h+=_buildDatePicker(ST.revMode,t,ST.revFrom,ST.revTo,'revSetMode','revGoRange','rev-date','rev-from','rev-to');
 
-  h+='<div class="sh">Today</div><div class="sgrid">'
+  // ── Range mode for Revenue ───────────────────────────────────
+  if(ST.revMode==='range'){
+    var rf=ST.revFrom||t,rtt=ST.revTo||t;
+    var rdates=_dateBetween(rf,rtt).filter(function(d){return !!loadSales(d);});
+    var rG=0,rN=0,rV=0,rC=0;
+    var rPT={};PLATFORMS.forEach(function(p){rPT[p]={qty:0,amt:0};});
+    var rIT={};ORDER_ITEMS.forEach(function(it){rIT[it]={qty:0,amt:0};});
+    rdates.forEach(function(d){
+      var rs=loadSales(d);if(!rs)return;
+      var rc=computeSales(rs);
+      rG+=rc.gross;rN+=rc.netSales;rV+=rc.variance;rC+=parseN(rs.custCount);
+      PLATFORMS.forEach(function(p){rPT[p].qty+=parseN(rs.online&&rs.online[p]?rs.online[p].qty:'');rPT[p].amt+=parseN(rs.online&&rs.online[p]?rs.online[p].amt:'');});
+      ORDER_ITEMS.forEach(function(it){rIT[it].qty+=parseN(rs.orders&&rs.orders[it]?rs.orders[it].qty:'');rIT[it].amt+=parseN(rs.orders&&rs.orders[it]?rs.orders[it].amt:'');});
+    });
+    var rAtv=rC>0?rN/rC:null;
+    h+='<div style="font-size:.78rem;color:var(--grey);margin:.4rem 0 .7rem;font-weight:700">📅 '+_rangeLabel(rf,rtt)+' &nbsp;·&nbsp; '+rdates.length+' day'+(rdates.length!==1?'s':'')+' with sales</div>';
+    h+='<div class="sgrid">'
+      +'<div class="scard y"><div class="sl">Gross Sales</div><div class="sv">'+mv('gross',fmtPHP(rG))+'</div></div>'
+      +'<div class="scard"><div class="sl">Net Sales</div><div class="sv">'+mv('netSales',fmtPHP(rN))+'</div></div>'
+      +'<div class="scard '+(rV<0?'r':'g')+'"><div class="sl">Total Variance</div><div class="sv '+(rV<0?'neg':'pos')+'">'+mv('variance',fmtPHP(rV))+'</div></div>'
+      +'<div class="scard"><div class="sl">Customers</div><div class="sv">'+(rC>0?rC.toLocaleString():'—')+'</div></div>'
+      +'<div class="scard g"><div class="sl">Avg Transaction</div><div class="sv">'+(rAtv?fmtPHP(rAtv):'—')+'</div></div>'
+      +'</div>';
+    // Platform breakdown
+    var rPRows=PLATFORMS.filter(function(p){return rPT[p].amt>0;});
+    if(rPRows.length){
+      h+='<div class="card" style="padding:.75rem .85rem"><div class="ctitle">📲 Sales by Platform — Range Total</div><div style="overflow-x:auto"><table class="ft"><thead><tr><th>Platform</th><th class="r">Qty</th><th class="r">Amount</th><th class="r">%</th></tr></thead><tbody>';
+      rPRows.forEach(function(p){var pct=rG>0?(rPT[p].amt/rG*100).toFixed(1):'0';h+='<tr><td>'+esc(p)+'</td><td class="r">'+rPT[p].qty+'</td><td class="r">'+fmtPHP(rPT[p].amt)+'</td><td class="r">'+pct+'%</td></tr>';});
+      var rWalk=rG-PLATFORMS.reduce(function(s,p){return s+rPT[p].amt;},0);
+      if(rWalk>0){var wp=(rWalk/rG*100).toFixed(1);h+='<tr><td>Walk-in / Cash</td><td class="r">—</td><td class="r">'+fmtPHP(rWalk)+'</td><td class="r">'+wp+'%</td></tr>';}
+      h+='</tbody></table></div></div>';
+    }
+    // Top items
+    var rTopIt=ORDER_ITEMS.map(function(it){return{name:it,qty:rIT[it].qty,amt:rIT[it].amt};}).filter(function(x){return x.qty>0;}).sort(function(a,b){return b.qty-a.qty;});
+    if(rTopIt.length){
+      h+='<div class="card" style="padding:.75rem .85rem"><div class="ctitle">🧾 Items Sold — Range Total</div><div style="overflow-x:auto"><table class="ft"><thead><tr><th>Item</th><th class="r">QTY</th><th class="r">Amount</th></tr></thead><tbody>';
+      rTopIt.forEach(function(x){h+='<tr><td>'+esc(x.name)+'</td><td class="r">'+x.qty+'</td><td class="r">'+fmtPHP(x.amt)+'</td></tr>';});
+      h+='</tbody></table></div></div>';
+    }
+    ST.branch=_prevRevBr;
+    panel.innerHTML=h;
+    return;
+  }
+
+  h+='<div style="height:.5rem"></div>';
+  h+='<div class="sh">'+fmtDate(t)+'</div><div class="sgrid">'
     +'<div class="scard y"><div class="sl">Gross</div><div class="sv">'+mv('gross',fmtPHP(tc.gross))+'</div></div>'
     +'<div class="scard"><div class="sl">Net Sales</div><div class="sv">'+mv('netSales',fmtPHP(tc.netSales))+'</div></div>'
     +'<div class="scard"><div class="sl">Cash</div><div class="sv">'+fmtPHP(tc.totalCash)+'</div></div>'
@@ -5727,7 +5958,10 @@ function renderStockDash(){
   const t=today();
   const ym=t.slice(0,7);
   const invDates=getAllInvDates();
-  const latestInv=invDates.length?loadInv(invDates[0]):null;
+  // Use selected stock date if available and has data; fall back to latest
+  const _selStockDate=ST.stockDate&&invDates.includes(ST.stockDate)?ST.stockDate:(invDates.length?invDates[0]:null);
+  if(ST.stockDate&&!invDates.includes(ST.stockDate))ST.stockDate=_selStockDate; // auto-correct invalid date
+  const latestInv=_selStockDate?loadInv(_selStockDate):null;
   const lowItems=getLowStockItems(latestInv);
   const allInvDatesM=getAllInvDates().filter(function(d){return d.startsWith(ym);});
   const wastageByItem={};
@@ -5762,9 +5996,22 @@ function renderStockDash(){
   const lowCount=catSummary.reduce(function(s,c){return s+c.low;},0);
   const storLowTotal=storStatus.reduce(function(s,w){return s+w.lowCount;},0);
 
-  var h='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem;flex-wrap:wrap;gap:.5rem">'
+  // ── Date picker for Stock ─────────────────────────────────────
+  var _stockDateOpts='';
+  invDates.forEach(function(d){_stockDateOpts+='<option value="'+d+'"'+(d===_selStockDate?' selected':'')+'>'+fmtDate(d)+'</option>';});
+  var _stockPicker='';
+  if(invDates.length){
+    _stockPicker='<div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin-bottom:.75rem">'
+      +'<span style="font-size:.78rem;font-weight:800;color:var(--grey);text-transform:uppercase;letter-spacing:.4px">View date:</span>'
+      +'<select onchange="stockGoDate(this.value)" style="border:1.5px solid var(--bdr);border-radius:8px;padding:.25rem .5rem;font-size:.82rem;background:#fff;color:#1F2937">'+_stockDateOpts+'</select>'
+      +'<span style="font-size:.72rem;color:var(--grey)">'+invDates.length+' inventory record'+(invDates.length!==1?'s':'')+' available</span>'
+      +'</div>';
+  }
+
+  var h='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.6rem;flex-wrap:wrap;gap:.5rem">'
     +'<div style="font-weight:800;font-size:1.05rem">🗂 Stock &amp; Inventory Dashboard</div>'
-    +'<div style="font-size:.78rem;color:var(--grey)">Last inv: '+(invDates.length?fmtDate(invDates[0]):'No data')+'</div></div>';
+    +'<div style="font-size:.78rem;color:var(--grey)">Viewing: '+(_selStockDate?fmtDate(_selStockDate):'No data')+'</div></div>';
+  h+=_stockPicker;
 
   h+='<div class="sgrid">'
     +'<div class="scard r"><div class="sl">Out of Stock</div><div class="sv neg">'+outCount+'</div></div>'
@@ -5773,7 +6020,7 @@ function renderStockDash(){
     +'<div class="scard g"><div class="sl">Categories OK</div><div class="sv pos">'+catSummary.filter(function(c){return c.out===0&&c.low===0;}).length+' / '+catSummary.length+'</div></div>'
     +'</div>';
 
-  h+='<div class="card"><div class="ctitle">📦 Shop Inventory Status — '+(invDates.length?fmtDate(invDates[0]):'No data yet')+'</div>';
+  h+='<div class="card"><div class="ctitle">📦 Shop Inventory Status — '+(_selStockDate?fmtDate(_selStockDate):'No data yet')+'</div>';
   if(!latestInv){
     h+='<p style="color:var(--grey);font-size:.875rem;text-align:center;padding:.75rem">No inventory data recorded yet.</p>';
   }else{
