@@ -927,9 +927,8 @@ function enterApp(fbUser){
   const users=loadUsers();
   let rec=users.find(function(x){return (x.username||'').toLowerCase()===uname.toLowerCase();});
   if(!rec)rec={username:uname,name:uname.charAt(0).toUpperCase()+uname.slice(1),role:'staff',perms:{sales:true,inventory:true}};
-  document.getElementById('lerr').style.display='none';
-  if(!ST.user) _showApp(rec); // only show if not already restored from cache
-  else ST.user=rec; // update user record in case perms changed
+  try{document.getElementById('lerr').style.display='none';}catch(e){}
+  _showApp(rec);
   syncFromCloud().then(function(n){
     if(n>0){
       showToast('☁️ Synced '+n+' record'+(n===1?'':'s')+' from cloud');
@@ -947,7 +946,13 @@ function enterApp(fbUser){
   var users=loadUsers();
   var rec=users.find(function(x){return (x.username||'').toLowerCase()===saved.toLowerCase();});
   if(!rec){_clearSession();return;}
-  try{_showApp(rec);}catch(e){_clearSession();}
+  ST.user=rec; // set FIRST — this is what stops Firebase null from logging the user out
+  try{document.getElementById('login-screen').style.display='none';}catch(e){}
+  try{document.getElementById('app').style.display='block';}catch(e){}
+  try{document.getElementById('ulbl').textContent=rec.name+' ('+rec.role+')';}catch(e){}
+  try{populateBranchSelects();}catch(e){}
+  try{applyPerms();}catch(e){}
+  try{var p=rec.perms||{};var ft=rec.role==='owner'?'dashboard':p.sales!==false?'sales':p.inventory!==false?'inventory':'history';goTab(ft);}catch(e){}
 })();
 // Firebase Auth verifies in background — confirms the cached session or handles explicit sign-out.
 _AUTH.onAuthStateChanged(function(fbUser){
